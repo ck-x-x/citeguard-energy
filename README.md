@@ -1,10 +1,48 @@
 # CiteGuard-Energy
 
-> 防捏造引用的能源 / 資料中心液冷文獻調研工作流：Dify Workflow + FastAPI 工具服務。
+**以 Dify Workflow 打造的「防捏造引用」能源文獻調研 AI 工作流**
 
-輸入一個技術問題，工作流會同時檢索**本地知識庫**（自建論文全文）與 **OpenAlex** 學術資料庫，把每一條證據編號成 `[KB-x]` / `[OA-x]`，再交給 LLM 撰寫報告，最後由程式碼節點**剔除任何不在證據白名單內的引用**，確保報告中的每個引用都查得到出處。
+![Built with Dify](https://img.shields.io/badge/Built%20with-Dify%20Workflow-1C64F2)
+![Dify Knowledge](https://img.shields.io/badge/RAG-Dify%20Knowledge-1C64F2)
+![FastAPI](https://img.shields.io/badge/Tool%20API-FastAPI-009688?logo=fastapi&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![License: MIT](https://img.shields.io/badge/License-MIT-green)
 
-**差異化**：作者是能源系學生，用 Dify 的低程式碼編排加上自寫 API 整合，做出一個服務本科領域（資料中心液冷、AI 能耗、熱管理）的 AI 工具，而不是通用聊天機器人；重點放在「引用可信度」這個 LLM 文獻調研最常見的問題上。
+> 整條流程在 **Dify** 上編排：Dify Knowledge 知識庫 ＋ 外部 API（FastAPI → OpenAlex）兩路平行檢索 → LLM 撰寫報告 → Code 節點逐一校驗引用。工作流以 **Dify DSL** 版本控管，評測透過 **Dify Workflow API** 自動執行。
+
+![CiteGuard-Energy 的 Dify Workflow 畫布](docs/workflow_canvas.png)
+
+## 什麼是 CiteGuard？
+
+**CiteGuard = Cite（引用）＋ Guard（守衛）**，也就是「引用守衛」；**-Energy** 代表它專門服務能源／節能領域（資料中心液冷、空調控制、AI 能耗）。
+
+**要解決的問題**：用 LLM 查文獻時，最常見也最危險的錯誤是**捏造引用**——AI 會寫出「根據 Zhang et al. (2023)，浸沒式冷卻可節能 45%」這種看起來很專業、但論文或數字根本不存在的句子。
+
+**CiteGuard 的做法**：不相信 LLM 自己說的出處，而是用程式確定性地把關。
+
+1. **先找證據**：從自建論文知識庫與 OpenAlex 學術資料庫取回相關段落。
+2. **證據編號＝白名單**：每份證據編成 `[KB-1]`、`[OA-2]`……，這份清單就是唯一合法的引用來源。
+3. **每句都要附證據**：LLM 撰寫報告時，每個含數據或結論的句子都必須標註證據編號。
+4. **守衛檢查**：Code 節點逐一比對報告中的編號——不在白名單的（例如 LLM 自創的 `[KB-9]`）直接剔除；引用全是捏造的句子整句刪除；最後自動附上真實的參考文獻與 DOI。
+5. **不知道就說不知道**：問到證據中完全不存在的技術（評測中的捏造技術陷阱題），報告必須回答「【證據不足】」，不得編造數據。
+
+**評測結果**：10 題全部成功、124 個引用 100% 可對應到真實證據、3 題捏造技術陷阱題全部正確拒答（詳見[評測](#評測)）。
+
+**作者背景**：能源系學生，用 Dify 低程式碼編排加上自寫 API 整合，做出服務本科領域的 AI 工具，而不是通用聊天機器人。
+
+## 用到的 Dify 功能
+
+| Dify 功能 | 在本專案的用途 |
+|---|---|
+| **Workflow 編排**（9 個節點、平行分支） | 知識庫與 OpenAlex 兩路檢索同時執行，再匯流到證據編號節點 |
+| **Knowledge 知識庫** | 15 篇論文；父子分段（父 1024／子 256）、混合檢索（語意 0.7＋關鍵字 0.3）、Top K 5 |
+| **模型供應商外掛** | Ollama（本機 bge-m3 embedding）、Groq（問題拆解）、Gemini（報告生成） |
+| **LLM 節點** | 問題拆解（中文問題 → 英文檢索查詢 JSON）、報告生成（強制每句附證據編號） |
+| **Code 節點（Python 沙箱）** | 解析查詢、證據編號與白名單、引用校驗（確定性剔除捏造引用、計算有效引用率） |
+| **HTTP Request 節點** | 呼叫本 repo 的 FastAPI 工具服務查 OpenAlex |
+| **失敗重試／錯誤預設值** | LLM 節點自動重試；OpenAlex 失敗時改用空結果，流程不中斷 |
+| **DSL 匯入匯出** | 工作流以 `dsl/citeguard_workflow.yml` 版本控管，由 `dsl/build_dsl.py` 產生 |
+| **Workflow API**（`/v1/workflows/run`） | `eval/run_eval.py` 透過 API 自動跑 10 題評測 |
 
 ---
 
@@ -19,8 +57,8 @@ flowchart LR
     B --> D[3b. OpenAlex 檢索<br/>HTTP 節點 → FastAPI]
     C --> E[4. 證據整理<br/>編號 KB-x / OA-x 並建立白名單]
     D --> E
-    E --> F[5. 報告生成<br/>Gemini 3.7 Flash]
-    F --> G[6. 引用校驗<br/>Code 節點剔除白名單外引用]
+    E --> F[5. 報告生成<br/>Gemini 3.5 Flash-Lite]
+    F --> G[6. 引用校驗<br/>Code 節點剔除白名單外引用] --> H[7. 結束<br/>報告＋指標]
 ```
 
 - **兩路平行檢索**：本地知識庫提供全文細節，OpenAlex 補充最新、更廣的文獻摘要。
@@ -33,10 +71,10 @@ flowchart LR
 
 | 元件 | 選擇 | 說明 |
 |---|---|---|
-| 工作流編排 | Dify Workflow（Docker 自架） | 視覺化節點編排、內建知識庫與自訂工具 |
+| 工作流編排 | **Dify 1.20 Workflow**（Docker Compose 自架） | 視覺化節點編排、內建知識庫、模型外掛、Workflow API |
 | Embedding | bge-m3（Ollama，本機 GPU） | 多語言、支援中英混合查詢，資料不出本機 |
 | 問題拆解 | Groq `openai/gpt-oss-120b` | 推理快，把中文問題拆成英文檢索查詢（JSON） |
-| 報告生成 | Gemini `gemini-3.7-flash`（thinking Low、關閉 Google 搜尋 grounding） | 長上下文、成本低；關閉 grounding 確保只用給定證據 |
+| 報告生成 | Gemini `gemini-3.5-flash-lite`（thinking Low、關閉 Google 搜尋 grounding） | 速度快、免費額度足夠跑評測；關閉 grounding 確保只用給定證據 |
 | 外部文獻 | OpenAlex（經本 repo 的 FastAPI 服務） | 免費開放學術資料庫；FastAPI 負責還原摘要、精簡欄位 |
 | 引用校驗 | Dify Code 節點（Python） | 以證據白名單過濾引用 |
 
@@ -172,11 +210,7 @@ python eval\run_eval.py --rescore <資料夾>  # 修改計分規則後，用已�
 
 ## 截圖
 
-Dify Workflow 畫布（兩路平行檢索 → 證據編號 → 報告生成 → 引用校驗）：
-
-![CiteGuard-Energy workflow](docs/workflow_canvas.png)
-
-一次實際執行（N1 逆重力流問題）：9 個節點全部成功，總耗時約 19 秒，兩路檢索平行執行。
+Dify Workflow 畫布見頁首。一次實際執行（N1 逆重力流問題）：9 個節點全部成功，總耗時約 19 秒，兩路檢索平行執行。
 
 | 節點追蹤（Tracing） | 輸入與輸出（Detail） |
 |---|---|
