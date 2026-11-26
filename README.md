@@ -176,6 +176,19 @@ Dify Workflow 畫布（兩路平行檢索 → 證據編號 → 報告生成 → 
 
 ![CiteGuard-Energy workflow](docs/workflow_canvas.png)
 
+一次實際執行（N1 逆重力流問題）：9 個節點全部成功，總耗時約 19 秒，兩路檢索平行執行。
+
+| 節點追蹤（Tracing） | 輸入與輸出（Detail） |
+|---|---|
+| ![Run tracing](docs/workflow_trace.png) | ![Run detail](docs/workflow_detail.png) |
+
+<details>
+<summary>結束節點的原始輸出（JSON）</summary>
+
+![Raw output](docs/workflow_results.png)
+
+</details>
+
 ## 範例輸出
 
 - [`examples/N1_immersion_flow_direction.md`](examples/N1_immersion_flow_direction.md)：正常題，逆重力流降低晶片溫度 33.8%、熱阻 55.6%，每句附證據編號與 DOI。
