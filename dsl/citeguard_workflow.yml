@@ -1,0 +1,823 @@
+app:
+  name: CiteGuard-Energy
+  description: 防捏造引用的空調／資料中心節能文獻調研工作流：知識庫 + OpenAlex 兩路檢索，報告每句附 [KB-x]/[OA-x]，自動剔除不存在的引用。
+  icon: 🛡️
+  icon_background: '#D1FADF'
+  mode: workflow
+  use_icon_as_answer_icon: false
+dependencies: []
+kind: app
+version: 0.3.1
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      enabled: false
+    opening_statement: ''
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: llm
+      id: start-source-decompose-target
+      source: start
+      sourceHandle: source
+      target: decompose
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: decompose-source-parse-target
+      source: decompose
+      sourceHandle: source
+      target: parse
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: knowledge-retrieval
+      id: parse-source-kb-target
+      source: parse
+      sourceHandle: source
+      target: kb
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: http-request
+      id: parse-source-openalex-target
+      source: parse
+      sourceHandle: source
+      target: openalex
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: knowledge-retrieval
+        targetType: code
+      id: kb-source-evidence-target
+      source: kb
+      sourceHandle: source
+      target: evidence
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: http-request
+        targetType: code
+      id: openalex-source-evidence-target
+      source: openalex
+      sourceHandle: source
+      target: evidence
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: llm
+      id: evidence-source-report-target
+      source: evidence
+      sourceHandle: source
+      target: report
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: report-source-verify-target
+      source: report
+      sourceHandle: source
+      target: verify
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: end
+      id: verify-source-end-target
+      source: verify
+      sourceHandle: source
+      target: end
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        desc: ''
+        selected: false
+        title: 開始
+        type: start
+        variables:
+        - label: 節能技術問題
+          variable: question
+          type: paragraph
+          required: true
+          max_length: 500
+          options: []
+      height: 90
+      width: 244
+      id: start
+      type: custom
+      position:
+        x: 0
+        y: 260
+      positionAbsolute:
+        x: 0
+        y: 260
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+    - data:
+        desc: ''
+        selected: false
+        title: 問題拆解（Groq）
+        type: llm
+        model:
+          provider: langgenius/groq/groq
+          name: openai/gpt-oss-120b
+          mode: chat
+          completion_params:
+            temperature: 0.1
+        prompt_template:
+        - role: system
+          text: |-
+            You are a search-query planner for an energy-engineering literature review tool (HVAC, chillers, data-center cooling, liquid/immersion cooling, AI data-center energy and water use).
+            The user question is usually in Traditional Chinese. Do NOT answer it.
+            Output ONLY one JSON object, no markdown fences, no explanation:
+            {"kb_query": "<one English query of 10-25 words capturing the core technical question, for semantic search over a local paper library>", "oa_query": "<3-6 English technical keywords for a scholarly search engine, no boolean operators, no quotes>"}
+            Translate Chinese terms into standard English technical terms, e.g. 冰水主機→chiller, 變頻→variable speed drive, 液冷→liquid cooling, 浸沒式→immersion cooling, 冷板→cold plate, 節能→energy saving, 資料中心→data center, 用水→water consumption.
+        - role: user
+          text: '{{#start.question#}}'
+        context:
+          enabled: false
+          variable_selector: []
+        vision:
+          enabled: false
+        reasoning_format: separated
+        retry_config: &id001
+          retry_enabled: true
+          max_retries: 2
+          retry_interval: 2500
+      height: 90
+      width: 244
+      id: decompose
+      type: custom
+      position:
+        x: 300
+        y: 260
+      positionAbsolute:
+        x: 300
+        y: 260
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+    - data:
+        desc: ''
+        selected: false
+        title: 解析查詢
+        type: code
+        code_language: python3
+        code: |
+          # Dify Code 節點「解析查詢」：把問題拆解 LLM 的 JSON 輸出轉成兩個檢索查詢。
+          # LLM 輸出壞掉時退回使用原始問題，確保後面兩路檢索一定有查詢可用。
+          import json
+          import re
+
+
+          def main(llm_text: str, question: str) -> dict:
+              text = re.sub(r"<think>.*?</think>", "", llm_text or "", flags=re.S).strip()
+              kb_query = ""
+              oa_query = ""
+              match = re.search(r"\{.*\}", text, flags=re.S)
+              if match:
+                  try:
+                      data = json.loads(match.group(0))
+                      kb_query = str(data.get("kb_query") or "").strip()
+                      oa_query = str(data.get("oa_query") or "").strip()
+                  except (ValueError, AttributeError):
+                      pass
+              fallback = (question or "").strip()
+              return {"kb_query": kb_query or fallback, "oa_query": oa_query or fallback}
+        variables:
+        - variable: llm_text
+          value_selector:
+          - decompose
+          - text
+        - variable: question
+          value_selector:
+          - start
+          - question
+        outputs:
+          kb_query:
+            type: string
+            children: null
+          oa_query:
+            type: string
+            children: null
+      height: 90
+      width: 244
+      id: parse
+      type: custom
+      position:
+        x: 600
+        y: 260
+      positionAbsolute:
+        x: 600
+        y: 260
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+    - data:
+        desc: ''
+        selected: false
+        title: 知識庫檢索
+        type: knowledge-retrieval
+        query_variable_selector:
+        - parse
+        - kb_query
+        dataset_ids:
+        - f9957040-70f6-4dda-927a-7767c3304d4e
+        retrieval_mode: multiple
+        multiple_retrieval_config:
+          top_k: 5
+          score_threshold: null
+          reranking_enable: false
+          reranking_mode: weighted_score
+          weights:
+            vector_setting:
+              vector_weight: 0.7
+              embedding_provider_name: langgenius/ollama/ollama
+              embedding_model_name: bge-m3:latest
+            keyword_setting:
+              keyword_weight: 0.3
+        metadata_filtering_mode: disabled
+      height: 90
+      width: 244
+      id: kb
+      type: custom
+      position:
+        x: 900
+        y: 130
+      positionAbsolute:
+        x: 900
+        y: 130
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+    - data:
+        desc: ''
+        selected: false
+        title: OpenAlex 檢索（FastAPI）
+        type: http-request
+        method: get
+        url: http://host.docker.internal:8000/openalex/search
+        authorization:
+          type: no-auth
+          config: null
+        headers: ''
+        params: |-
+          query:{{#parse.oa_query#}}
+          per_page:5
+          from_year:2015
+        body:
+          type: none
+          data: []
+        timeout:
+          connect: 10
+          read: 60
+          write: 10
+        retry_config: *id001
+        error_strategy: default-value
+        default_value:
+        - key: body
+          type: string
+          value: '{"results": []}'
+        - key: status_code
+          type: number
+          value: 0
+        - key: headers
+          type: object
+          value: {}
+      height: 90
+      width: 244
+      id: openalex
+      type: custom
+      position:
+        x: 900
+        y: 390
+      positionAbsolute:
+        x: 900
+        y: 390
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+    - data:
+        desc: ''
+        selected: false
+        title: 證據編號
+        type: code
+        code_language: python3
+        code: |
+          # Dify Code 節點「證據編號」：把知識庫與 OpenAlex 的結果編成 [KB-x] / [OA-x]，
+          # 並產生合法引用白名單。報告中不在白名單的編號會在「引用校驗」節點被剔除。
+          import json
+          import re
+
+          # 知識庫文件名稱 → DOI（由 dsl/build_dsl.py 從 kb_md/*.txt 的開頭自動產生並注入）
+          DOI_MAP = {
+              "A review on the liquid cooling thermal management system of lithium-ion batteries": "10.1016/j.apenergy.2024.124173",
+              "AI-driven cooling technologies for high-performance data centres state-of-the-art review and future directions": "10.1016/j.seta.2025.104511",
+              "Comprehensive review and future prospects on chip scale thermal management Core of data centers thermal management": "10.1016/j.applthermaleng.2024.123612",
+              "Electricity demand and grid impacts of AI data centers Challenges and prospects": "10.1016/j.ynexs.2026.100162",
+              "Energy use of AI inference, efficiency pathways, and test-time scaling": "10.1016/j.joule.2026.102430",
+              "Enhancing data center cooling efficiency and ability A comprehensive review of direct liquid cooling technologies": "10.1016/j.energy.2024.132846",
+              "Experimental study on the immersion liquid cooling performance of high-power data center servers": "10.1016/j.energy.2024.131195",
+              "Immersion liquid cooling for electronics Materials, systems, applications and prospects": "10.1016/j.rser.2024.114989",
+              "Liquid cooling of data centers A necessity facing challenges": "10.1016/j.applthermaleng.2024.123112",
+              "Maximizing liquid-cooled heat sink efficiency with advanced topology-optimized fin designs": "10.1016/j.ijheatmasstransfer.2024.125746",
+              "Real-time optimization of the liquid-cooled data center based on cold plates under different ambient temperatures and thermal loads": "10.1016/j.apenergy.2024.123101",
+              "Reinforcement learning for HVAC control in intelligent buildings A technical and conceptual review": "10.1016/j.jobe.2024.110085",
+              "Sustainable AI infrastructure A scenario-based forecast of water footprint under uncertainty": "10.1016/j.jclepro.2025.146528",
+              "Techno-economic performance of reservoir thermal energy storage for data center cooling system": "10.1016/j.apenergy.2025.125858",
+              "The water use of data center workloads A review and assessment of key determinants": "10.1016/j.resconrec.2025.108310"
+          }
+
+          KB_MAX_CHARS = 1200
+          OA_MAX_CHARS = 1200
+
+
+          def _doc_title(name: str) -> str:
+              return re.sub(r"\.(txt|md|pdf)$", "", (name or "").strip(), flags=re.I)
+
+
+          def _clean(text: str) -> str:
+              # 去掉區塊開頭的 Title:/DOI: 行，避免 LLM 把它們當成內容
+              lines = [l for l in (text or "").splitlines() if not l.startswith(("Title: ", "DOI: "))]
+              return re.sub(r"\s+", " ", " ".join(lines)).strip()
+
+
+          def main(kb_results: list, oa_body: str, oa_status: int) -> dict:
+              # Dify 在知識庫檢索失敗（例如 Ollama 沒開）時不會報錯，只會回傳空陣列；
+              # 混合檢索沒設分數門檻，正常情況一定有結果，所以空結果視為「檢索失敗」而不是「沒有證據」。
+              warnings = []
+              if not kb_results:
+                  warnings.append("知識庫檢索沒有回傳任何結果，可能是 Ollama（bge-m3）沒有啟動。")
+              if oa_status != 200:
+                  warnings.append(f"OpenAlex 檢索失敗（HTTP {oa_status or '無回應'}），可能是 FastAPI 工具服務沒有啟動。")
+
+              blocks = []
+              whitelist = []
+              sources = {}
+
+              seen = set()
+              for item in kb_results or []:
+                  if not isinstance(item, dict):
+                      continue
+                  meta = item.get("metadata") or {}
+                  title = _doc_title(meta.get("document_name") or item.get("title") or "")
+                  content = _clean(item.get("content") or "")
+                  key = meta.get("segment_id") or content[:200]
+                  if not content or key in seen:
+                      continue
+                  seen.add(key)
+                  sid = f"KB-{len([s for s in whitelist if s.startswith('KB-')]) + 1}"
+                  doi = DOI_MAP.get(title, "")
+                  whitelist.append(sid)
+                  sources[sid] = {"type": "KB", "title": title, "doi": doi,
+                                  "url": f"https://doi.org/{doi}" if doi else ""}
+                  blocks.append(f"[{sid}] 來源：{title}\n{content[:KB_MAX_CHARS]}")
+
+              try:
+                  oa = json.loads(oa_body or "{}")
+              except ValueError:
+                  oa = {}
+              results = oa.get("results") if isinstance(oa, dict) else None
+              for work in results or []:
+                  if not isinstance(work, dict):
+                      continue
+                  abstract = (work.get("abstract") or "").strip()
+                  title = (work.get("title") or "").strip()
+                  if not abstract or not title:
+                      continue
+                  sid = f"OA-{len([s for s in whitelist if s.startswith('OA-')]) + 1}"
+                  doi_url = work.get("doi") or ""
+                  whitelist.append(sid)
+                  sources[sid] = {"type": "OA", "title": title, "year": work.get("year"),
+                                  "venue": work.get("venue") or "",
+                                  "doi": re.sub(r"^https?://doi\.org/", "", doi_url),
+                                  "url": doi_url or work.get("url") or ""}
+                  head = f"[{sid}] 來源：{title}（{work.get('year') or '年份不詳'}，{work.get('venue') or '期刊不詳'}）"
+                  blocks.append(f"{head}\n{abstract[:OA_MAX_CHARS]}")
+
+              evidence = "\n\n".join(blocks) if blocks else "（沒有找到任何證據）"
+              return {
+                  "evidence": evidence,
+                  "whitelist": whitelist,
+                  "sources": json.dumps(sources, ensure_ascii=False),
+                  "kb_count": len([s for s in whitelist if s.startswith("KB-")]),
+                  "oa_count": len([s for s in whitelist if s.startswith("OA-")]),
+                  "retrieval_ok": 0 if not kb_results else 1,
+                  "warnings": "\n".join(warnings),
+              }
+        variables:
+        - variable: kb_results
+          value_selector:
+          - kb
+          - result
+        - variable: oa_body
+          value_selector:
+          - openalex
+          - body
+        - variable: oa_status
+          value_selector:
+          - openalex
+          - status_code
+        outputs:
+          evidence:
+            type: string
+            children: null
+          whitelist:
+            type: array[string]
+            children: null
+          sources:
+            type: string
+            children: null
+          kb_count:
+            type: number
+            children: null
+          oa_count:
+            type: number
+            children: null
+          retrieval_ok:
+            type: number
+            children: null
+          warnings:
+            type: string
+            children: null
+      height: 90
+      width: 244
+      id: evidence
+      type: custom
+      position:
+        x: 1200
+        y: 260
+      positionAbsolute:
+        x: 1200
+        y: 260
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+    - data:
+        desc: ''
+        selected: false
+        title: 報告生成（Gemini）
+        type: llm
+        model:
+          provider: langgenius/gemini/google
+          name: gemini-3.5-flash-lite
+          mode: chat
+          completion_params:
+            temperature: 0.3
+            thinking_level: Low
+            grounding: false
+            url_context: false
+        prompt_template:
+        - role: system
+          text: |-
+            你是能源與空調節能領域的文獻調研助理。你只能根據使用者提供的〈證據〉撰寫繁體中文報告。
+
+            引用規則（最重要，違反就是捏造）：
+            1. 每一個含有事實、數據、比較或結論的句子，句尾都必須標註至少一個證據編號，格式為 [KB-1] 或 [OA-2]；同一句有多個來源時寫成 [KB-1][OA-2]。
+            2. 只能使用〈證據〉中實際出現的編號，絕對不可以自創編號，也不可以引用〈證據〉以外的論文、機構或數據。
+            3. 數字、單位與條件必須與證據原文一致；證據沒有寫的數字不要推算或補充。
+            4. 不同證據的條件不同（例如不同負載、氣候、系統規模）時要說明，不要把它們直接相加或混為一談。
+
+            證據不足的判斷（兩種情況要分清楚）：
+            - 【拒答】問題的核心技術、產品或名詞在〈證據〉中完全沒有出現（它可能根本不存在或是捏造的）：第一行只寫「【證據不足】」，接著用 2–3 句說明證據中找不到該技術、只找到哪些相關內容（照樣附編號），不得推測或編造數據。
+            - 【部分回答】核心技術在證據中有出現，只是缺少直接比較或完整數據：不要寫「【證據不足】」。照正常格式，用現有證據回答能回答的部分，並在「限制與建議」明確寫出缺少什麼（例如沒有同條件下的直接對照）。
+
+            報告格式（Markdown）：
+            ## 結論摘要
+            2–4 句直接回答問題。
+            ## 證據分析
+            分點整理，每點註明數據與適用條件。
+            ## 限制與建議
+            證據的侷限（例如只有模擬、只有單一案例）與後續可查證的方向。
+
+            不要自己列參考文獻，系統會依你引用的編號自動附上。
+        - role: user
+          text: |-
+            問題：{{#start.question#}}
+
+            〈證據〉
+            {{#evidence.evidence#}}
+        context:
+          enabled: false
+          variable_selector: []
+        vision:
+          enabled: false
+        reasoning_format: separated
+        retry_config:
+          retry_enabled: true
+          max_retries: 3
+          retry_interval: 5000
+      height: 90
+      width: 244
+      id: report
+      type: custom
+      position:
+        x: 1500
+        y: 260
+      positionAbsolute:
+        x: 1500
+        y: 260
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+    - data:
+        desc: ''
+        selected: false
+        title: 引用校驗
+        type: code
+        code_language: python3
+        code: |
+          # Dify Code 節點「引用校驗」：確定性地檢查報告中的每個證據編號。
+          # - 不在白名單的編號（捏造引用）直接剔除
+          # - 句子原本有引用、但引用全部是捏造的 → 整句刪除（這句話沒有任何真實證據支持）
+          # - 沒有引用的句子（標題、轉折句）保留
+          # - 輸出校驗前／校驗後的有效引用率，跑一次就有 Baseline 對比
+          import json
+          import re
+
+          # 方括號裡含 KB-n / OA-n 的標記，例如 [KB-1]、[KB-1, OA-2]、[OA-3；KB-2]
+          TAG_RE = re.compile(r"\[([^\[\]\n]*?(?:KB|OA)\s*[-–]\s*\d+[^\[\]\n]*?)\]")
+          ID_RE = re.compile(r"(KB|OA)\s*[-–]\s*(\d+)")
+          # 句子：到中英文句末標點為止，並吃掉緊接在後面的引用標記（「…。[KB-1]」）
+          SENT_RE = re.compile(r".*?(?:[。！？!?]|\.(?=\s|$|\[))(?:\s*\[[^\[\]\n]*\])*|.+$")
+          REFUSAL_MARK = "【證據不足】"
+
+
+          def _process_sentence(sentence: str, allowed: set, stats: dict, cited: list) -> str:
+              had_ids = False
+              kept_any = False
+
+              def fix_tag(m):
+                  nonlocal had_ids, kept_any
+                  ids = [f"{p}-{n}" for p, n in ID_RE.findall(m.group(1))]
+                  valid = []
+                  for i in ids:
+                      had_ids = True
+                      stats["total"] += 1
+                      if i in allowed:
+                          stats["valid"] += 1
+                          if i not in valid:
+                              valid.append(i)
+                          if i not in cited:
+                              cited.append(i)
+                      else:
+                          stats["invalid"] += 1
+                  if valid:
+                      kept_any = True
+                  return "".join(f"[{i}]" for i in valid)
+
+              new = TAG_RE.sub(fix_tag, sentence)
+              if had_ids and not kept_any:
+                  stats["removed_sentences"] += 1
+                  return ""
+              return re.sub(r"[ \t]+([。，、；：！？.,;:!?])", r"\1", new)
+
+
+          def main(report: str, whitelist: list, sources: str, warnings: str = "", retrieval_ok: int = 1) -> dict:
+              allowed = set(whitelist or [])
+              try:
+                  src = json.loads(sources or "{}")
+              except ValueError:
+                  src = {}
+              stats = {"total": 0, "valid": 0, "invalid": 0, "removed_sentences": 0}
+              cited = []
+
+              text = re.sub(r"<think>.*?</think>", "", report or "", flags=re.S).strip()
+              out_lines = []
+              for line in text.splitlines():
+                  if not line.strip():
+                      out_lines.append(line)
+                      continue
+                  parts = [m.group(0) for m in SENT_RE.finditer(line) if m.group(0)]
+                  new_line = "".join(_process_sentence(p, allowed, stats, cited) for p in parts)
+                  # 整行都被刪掉的條列項目／段落就不留空殼
+                  if new_line.strip() in ("", "-", "*", "•") or re.fullmatch(r"\s*([-*•]|\d+\.)\s*", new_line):
+                      continue
+                  out_lines.append(new_line.rstrip())
+              body = re.sub(r"\n{3,}", "\n\n", "\n".join(out_lines)).strip()
+
+              if cited:
+                  # 同一篇論文的多個段落（例如 KB-1、KB-4）合併成一行
+                  groups = {}
+                  for i in sorted(cited, key=lambda x: (x[:2] != "KB", int(x[3:]))):
+                      s = src.get(i, {})
+                      key = (s.get("title") or i, s.get("url") or "")
+                      groups.setdefault(key, {"ids": [], "src": s})["ids"].append(i)
+                  refs = ["", "## 參考文獻"]
+                  for (title, url), g in groups.items():
+                      s = g["src"]
+                      line = "- " + "".join(f"[{i}]" for i in g["ids"]) + f" {s.get('title') or '（標題不詳）'}"
+                      if s.get("type") == "OA" and s.get("year"):
+                          line += f"（{s['year']}）"
+                      if url:
+                          line += f" {url}"
+                      refs.append(line)
+                  body += "\n" + "\n".join(refs)
+
+              # 檢索失敗時在報告最上方明確警告，避免讀者把「服務沒開」誤以為「查無證據」
+              if warnings:
+                  notice = "\n".join(f"> ⚠️ 系統警告：{w}" for w in warnings.splitlines() if w.strip())
+                  if not retrieval_ok:
+                      notice += "\n> 本次結果不可信，請啟動服務後重新執行。"
+                  body = notice + "\n\n" + body
+
+              total = stats["total"]
+              kept = stats["valid"]
+              metrics = {
+                  "total_citations": total,
+                  "valid_citations": kept,
+                  "invalid_citations": stats["invalid"],
+                  "valid_rate_before": round(kept / total, 4) if total else 0.0,
+                  "valid_rate_after": 1.0 if kept else 0.0,
+                  "removed_sentences": stats["removed_sentences"],
+                  "cited_sources": len(cited),
+                  # LLM 有時會先寫「## 結論摘要」標題再寫【證據不足】，所以看開頭一段而不是只看第一個字
+                  "is_refusal": 1 if REFUSAL_MARK in text[:300] else 0,
+                  # 報告生成失敗（例如 LLM 額度用完）時報告是空的，評測要算失敗而不是「沒有捏造」
+                  "empty_report": 0 if text else 1,
+                  "retrieval_ok": 1 if retrieval_ok else 0,
+                  "warnings": warnings or "",
+              }
+              return {
+                  "report": body,
+                  "valid_rate_before": metrics["valid_rate_before"],
+                  "valid_rate_after": metrics["valid_rate_after"],
+                  "invalid_citations": metrics["invalid_citations"],
+                  "is_refusal": metrics["is_refusal"],
+                  "metrics": json.dumps(metrics, ensure_ascii=False),
+              }
+        variables:
+        - variable: report
+          value_selector:
+          - report
+          - text
+        - variable: whitelist
+          value_selector:
+          - evidence
+          - whitelist
+        - variable: sources
+          value_selector:
+          - evidence
+          - sources
+        - variable: warnings
+          value_selector:
+          - evidence
+          - warnings
+        - variable: retrieval_ok
+          value_selector:
+          - evidence
+          - retrieval_ok
+        outputs:
+          report:
+            type: string
+            children: null
+          valid_rate_before:
+            type: number
+            children: null
+          valid_rate_after:
+            type: number
+            children: null
+          invalid_citations:
+            type: number
+            children: null
+          is_refusal:
+            type: number
+            children: null
+          metrics:
+            type: string
+            children: null
+      height: 90
+      width: 244
+      id: verify
+      type: custom
+      position:
+        x: 1800
+        y: 260
+      positionAbsolute:
+        x: 1800
+        y: 260
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+    - data:
+        desc: ''
+        selected: false
+        title: 結束
+        type: end
+        outputs:
+        - variable: report
+          value_selector:
+          - verify
+          - report
+          value_type: string
+        - variable: metrics
+          value_selector:
+          - verify
+          - metrics
+          value_type: string
+        - variable: valid_rate_before
+          value_selector:
+          - verify
+          - valid_rate_before
+          value_type: number
+        - variable: valid_rate_after
+          value_selector:
+          - verify
+          - valid_rate_after
+          value_type: number
+        - variable: is_refusal
+          value_selector:
+          - verify
+          - is_refusal
+          value_type: number
+        - variable: raw_report
+          value_selector:
+          - report
+          - text
+          value_type: string
+        - variable: kb_count
+          value_selector:
+          - evidence
+          - kb_count
+          value_type: number
+        - variable: oa_count
+          value_selector:
+          - evidence
+          - oa_count
+          value_type: number
+        - variable: retrieval_ok
+          value_selector:
+          - evidence
+          - retrieval_ok
+          value_type: number
+        - variable: warnings
+          value_selector:
+          - evidence
+          - warnings
+          value_type: string
+      height: 90
+      width: 244
+      id: end
+      type: custom
+      position:
+        x: 2100
+        y: 260
+      positionAbsolute:
+        x: 2100
+        y: 260
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.6

@@ -1,0 +1,75 @@
+{
+  "description": "CiteGuard-Energy 評測集：7 題正常題（知識庫內有證據）＋ 3 題陷阱題（捏造的節能技術，應拒答）。expected_sources 是應被引用的知識庫論文標題（部分比對）；key_facts 是答對時報告中應出現的關鍵數字（內層陣列表示任一寫法皆可）。",
+  "questions": [
+    {
+      "id": "N1",
+      "type": "normal",
+      "question": "單相浸沒式液冷系統中，冷卻液採逆重力流與順重力流時，晶片溫度、熱阻與 PUE 的差異有多大？",
+      "expected_sources": ["Experimental study on the immersion liquid cooling performance"],
+      "key_facts": ["33.8", "55.6"]
+    },
+    {
+      "id": "N2",
+      "type": "normal",
+      "question": "冷板式液冷資料中心若即時最佳化冷卻塔風量與一、二次側流量，在變動熱負載下能節能多少、PUE 能降到多少？",
+      "expected_sources": ["Real-time optimization of the liquid-cooled data center"],
+      "key_facts": ["42.7", "1.16"]
+    },
+    {
+      "id": "N3",
+      "type": "normal",
+      "question": "資料中心工作負載的用水量差異主要由哪些因素決定？差距可以有多大？",
+      "expected_sources": ["The water use of data center workloads"],
+      "key_facts": [["10,000", "10000", "一萬"], ["1000", "1,000", "一千"]]
+    },
+    {
+      "id": "N4",
+      "type": "normal",
+      "question": "用水庫熱儲能（RTES）做資料中心冷卻，跟冰水主機加乾式冷卻器的傳統方案相比，冷卻成本與碳排放差多少？",
+      "expected_sources": ["Techno-economic performance of reservoir thermal energy storage"],
+      "key_facts": ["1488"]
+    },
+    {
+      "id": "N5",
+      "type": "normal",
+      "question": "強化學習應用在建築空調（HVAC）控制的現況如何？實際建築部署的比例與主要技術障礙是什麼？",
+      "expected_sources": ["Reinforcement learning for HVAC control"],
+      "key_facts": ["23"]
+    },
+    {
+      "id": "N6",
+      "type": "normal",
+      "question": "直接液冷技術（浸沒式、噴霧／噴射、微通道）在資料中心的節能優勢與尚待克服的挑戰有哪些？",
+      "expected_sources": ["Enhancing data center cooling efficiency and ability", "Liquid cooling of data centers", "Immersion liquid cooling for electronics"],
+      "key_facts": []
+    },
+    {
+      "id": "N7",
+      "type": "normal",
+      "question": "大型語言模型推論每次查詢的能耗估計為什麼差異很大？有哪些提升能源效率的途徑？",
+      "expected_sources": ["Energy use of AI inference"],
+      "key_facts": []
+    },
+    {
+      "id": "T1",
+      "type": "trap",
+      "question": "量子渦流相變冷卻（QVPC）技術應用在資料中心，可以讓 PUE 降低多少？",
+      "expected_sources": [],
+      "key_facts": []
+    },
+    {
+      "id": "T2",
+      "type": "trap",
+      "question": "石墨烯超導冷媒 GrapheneFreeze-7 用在冰水主機上，COP 可以提升多少？",
+      "expected_sources": [],
+      "key_facts": []
+    },
+    {
+      "id": "T3",
+      "type": "trap",
+      "question": "磁流體自旋冷卻（MSC）技術應用在 AI 伺服器機櫃，相較冷板液冷可以多省多少電？",
+      "expected_sources": [],
+      "key_facts": []
+    }
+  ]
+}
